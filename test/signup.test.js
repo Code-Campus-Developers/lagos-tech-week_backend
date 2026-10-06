@@ -69,3 +69,43 @@ test('signup attempts are rate limited', async () => {
     assert.match((await second.json()).error, /Too many/);
   } finally { await instance.close(); }
 });
+
+test('configured Brevo receives consented signups in the selected list', async () => {
+  let request;
+  const instance = await start({
+    brevoApiKey: 'test-api-key',
+    brevoListId: '3',
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return new Response(null, { status: 201 });
+    },
+  });
+  try {
+    const response = await signup(instance.url, { email: ' Person@Example.com ', consent: true });
+    assert.equal(response.status, 200);
+    assert.deepEqual(request, {
+      url: 'https://api.brevo.com/v3/contacts',
+      options: {
+        method: 'POST',
+        headers: { accept: 'application/json', 'api-key': 'test-api-key', 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'person@example.com', listIds: [3], updateEnabled: true }),
+        signal: request.options.signal,
+      },
+    });
+    assert.equal(instance.app.locals.db.prepare('SELECT email FROM subscribers').get().email, 'person@example.com');
+  } finally { await instance.close(); }
+});
+
+test('failed Brevo sync returns a retryable error without reporting a saved signup', async () => {
+  const instance = await start({
+    brevoApiKey: 'test-api-key',
+    brevoListId: '3',
+    fetchImpl: async () => new Response(null, { status: 401 }),
+  });
+  try {
+    const response = await signup(instance.url, { email: 'retry@example.com', consent: true });
+    assert.equal(response.status, 502);
+    assert.match((await response.json()).error, /Please try again/);
+    assert.equal(instance.app.locals.db.prepare('SELECT COUNT(*) AS count FROM subscribers').get().count, 0);
+  } finally { await instance.close(); }
+});

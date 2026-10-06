@@ -10,7 +10,16 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const success = { message: 'Your interest is registered. Look out for Lagos Tech Week announcements.' };
 
-export function createApp({ databasePath = process.env.DATABASE_PATH || resolve(here, 'data/subscribers.sqlite'), limit = 10 } = {}) {
+export function createApp({
+  databasePath = process.env.DATABASE_PATH || resolve(here, 'data/subscribers.sqlite'),
+  limit = 10,
+  brevoApiKey = process.env.BREVO_API_KEY,
+  brevoListId = process.env.BREVO_LIST_ID,
+  fetchImpl = fetch,
+} = {}) {
+  if (Boolean(brevoApiKey) !== Boolean(brevoListId)) throw new Error('BREVO_API_KEY and BREVO_LIST_ID must be configured together.');
+  const brevoListIdNumber = brevoListId ? Number(brevoListId) : null;
+  if (brevoListId && (!Number.isSafeInteger(brevoListIdNumber) || brevoListIdNumber < 1)) throw new Error('BREVO_LIST_ID must be a positive integer.');
   if (databasePath !== ':memory:') mkdirSync(dirname(resolve(databasePath)), { recursive: true });
   const db = new DatabaseSync(databasePath);
   db.exec(`PRAGMA journal_mode = WAL;
@@ -30,13 +39,30 @@ export function createApp({ databasePath = process.env.DATABASE_PATH || resolve(
   app.use(cors({ origin: origins.length ? origins : false }));
   app.use(express.json({ limit: '4kb' }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
-  app.post('/api/subscribe', rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Too many attempts. Please try again in 15 minutes.' } }), (req, res) => {
+  app.post('/api/subscribe', rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Too many attempts. Please try again in 15 minutes.' } }), async (req, res) => {
     if (!req.is('application/json')) return res.status(415).json({ error: 'Please send your signup as JSON.' });
     const { email, consent, website } = req.body || {};
     if (typeof website === 'string' && website.trim()) return res.status(200).json(success);
     const normalized = typeof email === 'string' ? email.trim().toLowerCase() : '';
     if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return res.status(400).json({ error: 'Please enter a valid email address.' });
     if (consent !== true) return res.status(400).json({ error: 'Please agree to receive event announcements before joining.' });
+    if (brevoApiKey && brevoListIdNumber) {
+      try {
+        const response = await fetchImpl('https://api.brevo.com/v3/contacts', {
+          method: 'POST',
+          headers: { accept: 'application/json', 'api-key': brevoApiKey, 'content-type': 'application/json' },
+          body: JSON.stringify({ email: normalized, listIds: [brevoListIdNumber], updateEnabled: true }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok) {
+          console.error('Brevo contact sync failed with status:', response.status);
+          return res.status(502).json({ error: 'We couldn’t add your email right now. Please try again.' });
+        }
+      } catch (error) {
+        console.error('Brevo contact sync failed:', error.name || 'RequestError');
+        return res.status(502).json({ error: 'We couldn’t add your email right now. Please try again.' });
+      }
+    }
     insert.run(normalized, 'event-updates-v1');
     res.set('Cache-Control', 'no-store').status(200).json(success);
   });

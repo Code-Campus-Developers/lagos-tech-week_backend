@@ -18,6 +18,7 @@ Copy `.env.example` to `.env` to customize settings:
 - `PORT`: API port; defaults to 3001.
 - `HOST`: defaults to 127.0.0.1; use 0.0.0.0 where required by your host.
 - `DATABASE_PATH`: database file location; the default is `data/subscribers.sqlite` in this repository. Use a persistent disk in production.
+- `BREVO_API_KEY` and `BREVO_LIST_ID`: configure both to add new consented signups to the Brevo contact list. Keep the API key in `.env` or the hosting provider's secret settings, never in frontend code. Leave both empty for local-only development.
 - `FRONTEND_ORIGINS`: comma-separated allowed frontend origins, such as `https://www.example.com`. Required for browsers accessing a separately hosted frontend/API directly. No trailing slash or page path.
 - `TRUST_PROXY`: configure only to match your host's actual proxy arrangement.
 - `FRONTEND_DIST`: optional absolute path to a built frontend for combined hosting. Leave empty for an independent API.
@@ -27,7 +28,7 @@ Copy `.env.example` to `.env` to customize settings:
 - `GET /api/health`: returns `{ "status": "ok" }`.
 - `POST /api/subscribe`: accepts JSON `{ "email": "you@example.com", "consent": true, "website": "" }`. The website field is a bot honeypot and must be empty.
 
-The API validates email and consent, normalizes and deduplicates email addresses, limits repeated attempts, and stores consent and signup timestamps. There is no public subscriber-list endpoint. Database files and environment secrets are excluded from Git.
+The API validates email and consent, normalizes and deduplicates email addresses, limits repeated attempts, and stores consent and signup timestamps. When Brevo is configured, each accepted signup is also added to that list; Brevo failures return a retryable error. There is no public subscriber-list endpoint. Database files and environment secrets are excluded from Git.
 
 Signups are saved, but announcement emails are not sent automatically. Connect an email provider separately before sending updates.
 
